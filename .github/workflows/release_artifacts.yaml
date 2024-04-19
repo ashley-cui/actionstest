@@ -17,7 +17,6 @@ on:
           - "true"  # Must be quoted string, boolean value not supported.
           - "false"
 
-
 permissions:
   contents: write
 
@@ -36,6 +35,7 @@ jobs:
         fi
         echo
         echo "version=$VERSION" >> $GITHUB_OUTPUT
+
     - name: Consolidate dryrun setting to always be true or false
       id: actual_dryrun
       run: |
@@ -47,6 +47,13 @@ jobs:
         else
           echo "dryrun=${{ inputs.dryrun }}" >> $GITHUB_OUTPUT
         fi
+
+    - name: Dry Run Status
+      if: >-
+        steps.actual_dryrun.outputs.dryrun == 'true'
+      run: |
+          echo "::notice::This workflow execution will be a dry-run"
+
     - name: Check uploads
       id: check
       run: |
@@ -55,15 +62,16 @@ jobs:
                 'podman-remote-release-darwin_arm64.zip darwin_arm' \
                 'podman-remote-release-windows_amd64.zip windows_amd' \
                 'podman-remote-static-linux_amd64.tar.gz linux_amd' \
-                'podman-remote-static-linux_arm64.tar.gz linux_arm' 
+                'podman-remote-static-linux_arm64.tar.gz linux_arm'
           do
             set -- $artifact # Convert the "tuple" into the param args $1 $2...
             status=$(curl -s -o /dev/null -w "%{http_code}" "${URI}/${1:?}")
             if [[ "$status" == "404" ]] ; then
+              echo "${1:?} will be built"
               needsbuild=true
-              echo "${2:?}=true"
+              echo "${2:?}=true" >> $GITHUB_OUTPUT
             else
-              echo "::warning::${artifact} already exists, skipping"
+              echo "::warning::${1:?} already exists, skipping"
             fi
           done
 
@@ -72,7 +80,7 @@ jobs:
           else
             echo "No new artifacts need to be built."
           fi
-    
+
     - name: Checkout Version
       if: >-
         steps.check.outputs.buildartifacts == 'true' ||
@@ -81,7 +89,7 @@ jobs:
       with:
         repository: containers/podman
         ref: ${{steps.getversion.outputs.version}}
-    
+
     - name: Set up Go
       if: >-
         steps.check.outputs.buildartifacts == 'true' ||
@@ -89,13 +97,13 @@ jobs:
       uses: actions/setup-go@v5
       with:
         go-version: stable
-    
+
     - name: Setup artifact directory
       if: >-
         steps.check.outputs.buildartifacts == 'true' ||
         steps.actual_dryrun.outputs.dryrun == 'true'
       run: mkdir -p release/
-  
+
     - name: Build Darwin AMD
       if: >-
         steps.check.outputs.darwin_amd == 'true' ||
@@ -103,9 +111,9 @@ jobs:
       run: |
           make podman-remote-release-darwin_amd64.zip
           mv podman-remote-release-darwin_amd64.zip release/
-    
+
     - name: Build Darwin ARM
-      if: >-  
+      if: >-
         steps.check.outputs.darwin_arm  == 'true' ||
         steps.actual_dryrun.outputs.dryrun == 'true'
       run: |
@@ -120,16 +128,16 @@ jobs:
             make podman-remote-static-linux_amd64
             tar -cvzf podman-remote-static-linux_amd64.tar.gz bin/podman-remote-static-linux_amd64
             mv podman-remote-static-linux_amd64.tar.gz release/
-    
+
     - name: Build Linux ARM
       if: >-
         steps.check.outputs.linux_arm == 'true' ||
         steps.actual_dryrun.outputs.dryrun == 'true'
-      run: |   
+      run: |
           make podman-remote-static-linux_arm64
           tar -cvzf podman-remote-static-linux_arm64.tar.gz bin/podman-remote-static-linux_arm64
           mv podman-remote-static-linux_arm64.tar.gz release/
-    
+
     - name: Build Windows AMD
       if: >-
         steps.check.outputs.windows_amd == 'true' ||
@@ -138,7 +146,7 @@ jobs:
           sudo apt-get install -y pandoc
           make podman-remote-release-windows_amd64.zip
           mv podman-remote-release-windows_amd64.zip release/
-    
+
     - name: shasums
       if: >-
         steps.check.outputs.buildartifacts == 'true' ||
@@ -147,6 +155,7 @@ jobs:
           pushd release
           sha256sum *.zip *.tar.gz > shasums
           popd
+
     - name: Upload to Actions as artifact
       if: >-
         steps.check.outputs.buildartifacts == 'true' ||
@@ -155,21 +164,22 @@ jobs:
       with:
         name: artifacts
         path: |
-          release/* 
-    - name: Upload to Release
-      if: >-
-        steps.check.outputs.buildartifacts == 'true' &&
-        steps.actual_dryrun.outputs.dryrun == 'false'
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      run: |
-        (gh release download ${{steps.getversion.outputs.version}} -p "shasums" || exit 0)
-        cat release/shasums >> shasums
-        gh release upload ${{steps.getversion.outputs.version}} release/*.zip release/*.tar.gz
-        gh release upload ${{steps.getversion.outputs.version}} --clobber shasums
+          release/*
+
+    # - name: Upload to Release
+    #   if: >-
+    #     steps.check.outputs.buildartifacts == 'true' &&
+    #     steps.actual_dryrun.outputs.dryrun == 'false'
+    #   env:
+    #     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    #   run: |
+    #     (gh release download ${{steps.getversion.outputs.version}} -p "shasums" || exit 0)
+    #     cat release/shasums >> shasums
+    #     gh release upload ${{steps.getversion.outputs.version}} release/*.zip release/*.tar.gz
+    #     gh release upload ${{steps.getversion.outputs.version}} --clobber shasums
     - name: Trigger Windows Installer
       if: >-
           steps.check.outputs.windows_amd == 'true' ||
-          steps.actual_dryrun.outputs.dryrun == 'true'
+          steps.actual_dryrun.outputs.dryrun == 'false'
       run: |
         gh workflow run second.yaml -f ${{steps.getversion.outputs.version}} -f dryrun=false
