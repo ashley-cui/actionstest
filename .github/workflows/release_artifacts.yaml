@@ -1,6 +1,8 @@
 name: Upload Release Artifacts
 
 on:
+  release:
+    types: [published]
   workflow_dispatch:
     inputs:
       version:
@@ -64,6 +66,7 @@ jobs:
               echo "::warning::${artifact} already exists, skipping"
             fi
           done
+
           if [ "$needsbuild" = true ]; then
             echo "buildartifacts=true" >> $GITHUB_OUTPUT
           else
@@ -153,13 +156,20 @@ jobs:
         name: artifacts
         path: |
           release/* 
-    # - name: Upload to Release
-    #   if: >-
-    #     steps.actual_dryrun.outputs.dryrun == 'false'
-    #   env:
-    #     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-    #   run: |
-    #     (gh release download ${{steps.getversion.outputs.version}} -p "shasums" || exit 0)
-    #     cat release/shasums >> shasums
-    #     gh release upload ${{steps.getversion.outputs.version}} *.zip *.tar.gz
-    #     gh release upload ${{steps.getversion.outputs.version}} --clobber shasums
+    - name: Upload to Release
+      if: >-
+        steps.check.outputs.buildartifacts == 'true' &&
+        steps.actual_dryrun.outputs.dryrun == 'false'
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        (gh release download ${{steps.getversion.outputs.version}} -p "shasums" || exit 0)
+        cat release/shasums >> shasums
+        gh release upload ${{steps.getversion.outputs.version}} release/*.zip release/*.tar.gz
+        gh release upload ${{steps.getversion.outputs.version}} --clobber shasums
+    - name: Trigger Windows Installer
+      if: >-
+          steps.check.outputs.windows_amd == 'true' ||
+          steps.actual_dryrun.outputs.dryrun == 'true'
+      run: |
+        gh workflow run second.yaml -f ${{steps.getversion.outputs.version}} -f dryrun=false
