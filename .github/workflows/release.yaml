@@ -1,0 +1,173 @@
+name: Upload Release Artifacts
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version to build and upload (e.g. "v9.8.7")'
+        required: true
+      dryrun:
+        description: 'Perform all the steps except uploading to the release page'
+        required: true
+        default: "true"  # 'choice' type requires string value
+        type: choice
+        options:
+          - "true"  # Must be quoted string, boolean value not supported.
+          - "false"
+
+permissions:
+  contents: write
+
+jobs:
+  build-artifacts:
+    name: Build Artifacts
+    runs-on: ubuntu-22.04
+    steps:
+    - name: Determine Version
+      id: getversion
+      run: |
+        if [[ -z "${{ inputs.version }}" ]]
+        then
+              VERSION=${{ github.event.release.tag_name }}
+        else
+              VERSION=${{ inputs.version }}
+        fi
+        echo
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+    - name: Checkout Version
+      uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4
+      with:
+        repository: containers/podman
+        ref: ${{steps.getversion.outputs.version}}
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: stable
+
+    - name: Set up pandoc
+      run: |
+          sudo apt-get install -y pandoc
+
+    - name: Build Artifacts
+      run: |
+          make release-artifacts
+
+    - name: Upload to Actions as artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: artifacts
+        path: |
+          release/*
+
+  # mac-pkg:
+  #   name: Build MacOS pkginstaller
+  #   runs-on: macos-latest
+  #   env:
+  #     APPLICATION_CERTIFICATE: ${{ secrets.MACOS_APPLICATION_CERT }}
+  #     CODESIGN_IDENTITY: ${{ secrets.MACOS_APPLICATION_IDENTITY }}
+  #     INSTALLER_CERTIFICATE: ${{ secrets.MACOS_INSTALLER_CERT }}
+  #     PRODUCTSIGN_IDENTITY: ${{ secrets.MACOS_INSTALLER_IDENTITY }}
+  #     CERTIFICATE_PWD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
+
+  #     NOTARIZE_TEAM: ${{ secrets.MACOS_NOTARIZATION_TEAM_ID }}
+  #     NOTARIZE_USERNAME: ${{ secrets.MACOS_NOTARIZATION_APPLE_ID }}
+  #     NOTARIZE_PASSWORD: ${{ secrets.MACOS_NOTARIZATION_PWD }}
+
+  #     KEYCHAIN_PWD: ${{ secrets.MACOS_CI_KEYCHAIN_PWD }}
+  #   steps:
+  #   - name: Consolidate dryrun setting to always be true or false
+  #     id: actual_dryrun
+  #     run: |
+  #       # The 'release' trigger will not have a 'dryrun' input set. Handle
+  #       # this case in a readable/maintainable way.
+  #       if [[ -z "${{ inputs.dryrun }}" ]]
+  #       then
+  #         echo "dryrun=false" >> $GITHUB_OUTPUT
+  #       else
+  #         echo "dryrun=${{ inputs.dryrun }}" >> $GITHUB_OUTPUT
+  #       fi
+  #   - name: Determine Version
+  #     id: getversion
+  #     run: |
+  #       if [[ -z "${{ inputs.version }}" ]]
+  #       then
+  #             VERSION=${{ github.event.release.tag_name }}
+  #       else
+  #             VERSION=${{ inputs.version }}
+  #       fi
+  #       echo
+  #       echo "version=$VERSION" >> $GITHUB_OUTPUT
+  #   - name: Checkout Version
+  #     uses: actions/checkout@v4
+  #     with:
+  #       repository: containers/podman
+  #       ref: ${{steps.getversion.outputs.version}}
+  #   - name: Set up Go
+  #     uses: actions/setup-go@v5
+  #     with:
+  #       go-version: stable
+  #   - name: Create Keychain
+  #     run: |
+  #       echo $APPLICATION_CERTIFICATE | base64 --decode -o appcert.p12
+  #       echo $INSTALLER_CERTIFICATE | base64 --decode -o instcert.p12
+
+  #       security create-keychain -p "$KEYCHAIN_PWD" build.keychain
+  #       security default-keychain -s build.keychain
+  #       security unlock-keychain -p "$KEYCHAIN_PWD" build.keychain
+  #       security import appcert.p12 -k build.keychain -P "$CERTIFICATE_PWD" -T /usr/bin/codesign
+  #       security import instcert.p12 -k build.keychain -P "$CERTIFICATE_PWD" -T /usr/bin/productsign
+  #       security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PWD" build.keychain &> /dev/null
+
+  #       xcrun notarytool store-credentials "notarytool-profile" --apple-id "$NOTARIZE_USERNAME" --team-id "$NOTARIZE_TEAM" --password "$NOTARIZE_PASSWORD" &> /dev/null
+  #   - name: Build and Sign ARM
+  #     working-directory: contrib/pkginstaller
+  #     run: |
+  #       make ARCH=aarch64 notarize &> /dev/null
+  #       cd out && shasum -a 256 podman-installer-macos-arm64.pkg >> shasums
+  #   - name: Build and Sign AMD
+  #     working-directory: contrib/pkginstaller
+  #     run: |
+  #       make ARCH=amd64 notarize &> /dev/null
+  #       cd out && shasum -a 256 podman-installer-macos-amd64.pkg >> shasums
+  #   - name: Build and Sign Universal
+  #     working-directory: contrib/pkginstaller
+  #     run: |
+  #       make ARCH=universal notarize &> /dev/null
+  #       cd out && shasum -a 256 podman-installer-macos-universal.pkg >> shasums
+  #   - name: Artifact
+  #     uses: actions/upload-artifact@v4
+  #     with:
+  #       name: installers
+  #       path: |
+  #         contrib/pkginstaller/out/podman-installer-macos-*.pkg
+  #         contrib/pkginstaller/out/shasums
+
+# upload:
+
+#     steps:
+# - name: Download all workflow run artifacts
+# - name: Consolidate dryrun setting to always be true or false
+#       id: actual_dryrun
+#       run: |
+#         # The 'release' trigger will not have a 'dryrun' input set. Handle
+#         # this case in a readable/maintainable way.
+#         if [[ -z "${{ inputs.dryrun }}" ]]
+#         then
+#           echo "dryrun=false" >> $GITHUB_OUTPUT
+#         else
+#           echo "dryrun=${{ inputs.dryrun }}" >> $GITHUB_OUTPUT
+#         fi
+#   uses: actions/download-artifact@v4
+#     - name: Upload to Release
+#       if: >-
+#         steps.check.outputs.buildartifacts == 'true' &&
+#         steps.actual_dryrun.outputs.dryrun == 'false'
+#       env:
+#         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+#       run: |
+#         (gh release download ${{steps.getversion.outputs.version}} -p "shasums" || exit 0)
+#         cat release/shasums >> shasums
+#         gh release upload ${{steps.getversion.outputs.version}} release/*.zip release/*.tar.gz
+#         gh release upload ${{steps.getversion.outputs.version}} --clobber shasums
